@@ -1,0 +1,1 @@
+savedcmd_/home/pi/FinalProject/driver/EncoderDriver.ko := aarch64-linux-gnu-ld -r -EL  -maarch64elf -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T arch/arm64/module.lds -o /home/pi/FinalProject/driver/EncoderDriver.ko /home/pi/FinalProject/driver/EncoderDriver.o /home/pi/FinalProject/driver/EncoderDriver.mod.o /home/pi/FinalProject/driver/.module-common.o

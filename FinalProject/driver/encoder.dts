@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835";
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+            encoder_drv {
+                compatible = "speed_encoder";
+                enc-gpios = <&gpio 23 0>;     /* Pin 23 for Encoder - Active High */
+            };
+        };
+    };
+};
