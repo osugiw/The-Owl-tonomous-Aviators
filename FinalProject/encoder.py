@@ -1,12 +1,16 @@
 import RPi.GPIO as GPIO
 import time
 
-class MotorEncoder():
+"""
+    Calculate Motor RPM
+"""
+class MotorEncoder:
     def __init__(self):
         self.param_path = "/sys/module/EncoderDriver/parameters/enc_count"
         self.last_count = self._read_enc()
         self.last_time = time.time()
         self.holes_per_rev = 20
+        self.rpm_history = [0, 0, 0, 0, 0] # For filter
 
     def _read_enc(self):
         """Read the raw count from the kernel module"""
@@ -32,18 +36,25 @@ class MotorEncoder():
         # RPM calculation
         rpm = (delta_count / delta_time) * (60 / self.holes_per_rev)
 
+        # Ignore if there is outlier RPM
+        if rpm > 5000:
+            return 0.0 # Or return the last known good RPM
+
+        # Apply filtering using averaging
+        self.rpm_history.append(rpm)
+        self.rpm_history.pop(0)
+        smoothed_rpm = sum(self.rpm_history) / len(self.rpm_history)
+
         # Update time and count
         self.last_count = current_count
         self.last_time = current_time
+        return smoothed_rpm
 
-        return rpm
-
-# Main loop
-if __name__ == "__main__":
-    reader = MotorEncoder()
-    try:
-        while True:
-            time.sleep(1) # Measure every second
-            print(f"Current Speed: {reader.calculate_rpm():.2f} RPM")
-    except KeyboardInterrupt:
-        print("\nStopped.")
+# if __name__ == "__main__":
+#     reader = MotorEncoder()
+#     try:
+#         while True:
+#             time.sleep(1) # Measure every second
+#             print(f"Current Speed: {reader.calculate_rpm():.2f} RPM")
+#     except KeyboardInterrupt:
+#         print("\nStopped.")
