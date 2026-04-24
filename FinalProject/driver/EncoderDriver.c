@@ -12,13 +12,12 @@
 // Timer variables
 ktime_t now;
 static ktime_t lastTime;
-static ktime_t startTime;
 
 // GPIO variables
 unsigned int irq_enc_num;
 struct gpio_desc *enc;
-static int enc_speed = 0;
-module_param(enc_speed, int, 0644);
+static int enc_count = 0;
+module_param(enc_count, int, 0644);
 
 /**
  * @brief Interrupt service routine is called, when interrupt is triggered
@@ -30,14 +29,16 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 	// Verify debounce time
 	now = ktime_get();
 	time_diff_ns = ktime_to_ns(ktime_sub(now, lastTime));
-	if(time_diff_ns < 300000000ULL)
+
+	// Debounce is 1ms because we have 20-hole wheel
+	if(time_diff_ns < 10000000)
 	{
 		printk("Pressed is ignored\n");
 		return IRQ_HANDLED;
 	}
 
-	// Valid encoder change
-    enc_speed = time_diff_ns / 1000000;
+	// Count encoder
+    enc_count++;
 	lastTime = ktime_get();
 
   return IRQ_HANDLED;
