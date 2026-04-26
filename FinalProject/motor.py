@@ -19,6 +19,9 @@ speed_Kp = 0.001
 speed_Ki = 0.005
 speed_Kd = 0.00003
 
+steering_Kp = 0.0001
+steering_Ki = 0.0005
+steering_Kd = 0.0001
 
 # Plot for Tuning PID
 speed_plot = {
@@ -29,6 +32,15 @@ speed_plot = {
     "i"           : [],
     "d"           : [],
 }
+steering_plot = {
+    "steering_target"  : [],
+    "steering_err"     : [],
+    "steering_actual"  : [],
+    "p"           : [], 
+    "i"           : [],
+    "d"           : [],
+}
+
 
 """
     Control Motor
@@ -41,7 +53,10 @@ class MotorController:
         # PID Controller Init
         self.pid_speed_integral = 0
         self.pid_speed_last_error = 0
-        self.last_time = time.time()
+        self.pid_speed_last_time = time.time()
+        self.pid_steering_integral = 0
+        self.pid_steering_last_error = 0
+        self.pid_steering_last_time = time.time()
         
         # Pin Initialization
         GPIO.setmode(GPIO.BCM)
@@ -79,7 +94,7 @@ class MotorController:
 
     def update_speed(self, target_RPM, measured_RPM):
         current_time = time.time()
-        dt = current_time - self.last_time
+        dt = current_time - self.pid_speed_last_time
 
         # Prevent zero DC
         if dt < 0.010:
@@ -109,7 +124,7 @@ class MotorController:
         speed_plot["d"].append(_D)
 
         # Update state
-        self.last_time = current_time
+        self.pid_speed_last_time = current_time
         self.pid_speed_last_error = error
 
         return final_pwm
@@ -129,6 +144,65 @@ class MotorController:
         # Bottom Plot: PID Term Contributions
         ax2.plot(speed_plot["p"], label="P (Proportional)")
         ax2.plot(speed_plot["i"], label="I (Integral)")
+        ax2.plot(speed_plot["d"], label="D (Derivative)")
+        ax2.set_ylabel("PWM Correction Value")
+        ax2.set_xlabel("Sample Number")
+        ax2.legend()
+
+        plt.tight_layout()
+        plt.savefig("PID_tuning.png", dpi=150)
+        
+        # CRITICAL: Close the plot to free memory
+        plt.close(fig)
+
+    def update_steering(self, target_direction, actual_direction):
+        current_time = time.time()
+        dt = current_time - self.pid_steering_last_time
+
+        # Prevent zero DC
+        if dt < 0.010:
+            return 7.5
+        
+        # Calculate the difference between target and measured
+        error = target_direction - actual_direction
+        
+        # PID Calculation
+        _P = steering_Kp * error
+        _D =  steering_Kd * ((error - self.pid_steering_last_error) / dt)
+        
+        # New adjustment
+        output = steering_left + (_P + _D)
+        final_pwm = max(steering_left, min(steering_right, output))  # ADC Mapping for final Duty Cycle PWM
+
+        print(f"Actual Dir: {actual_direction:6.1f} | Error Dir: {error:6.1f} --- PID({_P:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
+
+        # For tuning the PID
+        steering_plot["steering_target"].append(target_direction)
+        steering_plot["steering_actual"].append(actual_direction)
+        steering_plot["steering_err"].append(error) 
+        steering_plot["p"].append(_P)
+        steering_plot["d"].append(_D)
+
+        # Update state
+        self.pid_steering_last_time = current_time
+        self.pid_steering_last_error = error
+
+        return final_pwm
+    
+    def plot_steering_PID(self):
+        # --- Plotting the Results ---
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+        # Top Plot: RPM Performance
+        ax1.plot(speed_plot["steering_target"], label="Target Steering", linestyle="--")
+        ax1.plot(speed_plot["steering_actual"], label="Actual Steering", linewidth=2)
+        ax1.plot(speed_plot["steering_err"], label="Error Steering", linestyle=":")
+        ax1.set_ylabel("Steering (%)")
+        ax1.legend()
+        ax1.set_title("PID Tuning Response")
+
+        # Bottom Plot: PID Term Contributions
+        ax2.plot(speed_plot["p"], label="P (Proportional)")
         ax2.plot(speed_plot["d"], label="D (Derivative)")
         ax2.set_ylabel("PWM Correction Value")
         ax2.set_xlabel("Sample Number")
