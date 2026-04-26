@@ -1,6 +1,8 @@
 import matplotlib
 # Use the 'Agg' backend to avoid memory-heavy GUI windows
 matplotlib.use('Agg') 
+import numpy as np
+
 import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 import time
@@ -19,9 +21,9 @@ speed_Kp = 0.001
 speed_Ki = 0.005
 speed_Kd = 0.00003
 
-steering_Kp = 0.0001
-steering_Ki = 0.0005
-steering_Kd = 0.0001
+steering_Kp = -0.015
+steering_Ki = 0.0
+steering_Kd = 0.001
 
 # Plot for Tuning PID
 speed_plot = {
@@ -78,12 +80,12 @@ class MotorController:
     def set_speed(self, duty_cycle):
         self.speed_pwm.ChangeDutyCycle(duty_cycle)
 
-    def set_steering(self, direction="forward"):
-        if direction == "forward":
+    def set_steering(self, angle="forward"):
+        if angle == "forward":
             self.steering_pwm.ChangeDutyCycle(steering_forward)
-        elif direction == "right":
+        elif angle == "right":
             self.steering_pwm.ChangeDutyCycle(steering_right)
-        elif direction == "left":
+        elif angle == "left":
             self.steering_pwm.ChangeDutyCycle(steering_left)
 
     def stop(self):
@@ -113,7 +115,7 @@ class MotorController:
         output = min_speed_pwm + (_P + _I + _D)
         final_pwm = max(min_speed_pwm, min(max_speed_pwm, output))  # ADC Mapping for final Duty Cycle PWM
 
-        print(f"Measured RPM: {measured_RPM:6.1f} | Error RPM: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
+        # print(f"[Speed - RPM] Measured: {measured_RPM:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
 
         # For tuning the PID
         speed_plot["rpm_target"].append(target_RPM)
@@ -129,94 +131,105 @@ class MotorController:
 
         return final_pwm
 
-    def plot_speed_PID(self):
-        # --- Plotting the Results ---
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    def update_steering(self, target_angle, actual_angle):
+        if actual_angle is None:
+            return 7.5  # Neutral/Straight
 
-        # Top Plot: RPM Performance
-        ax1.plot(speed_plot["rpm_target"], label="Target RPM", linestyle="--")
-        ax1.plot(speed_plot["rpm_actual"], label="Actual RPM", linewidth=2)
-        ax1.plot(speed_plot["rpm_err"], label="Error RPM", linestyle=":")
-        ax1.set_ylabel("Speed (RPM)")
-        ax1.legend()
-        ax1.set_title("PID Tuning Response")
+        now = time.time()
+        dt = now - self.pid_steering_last_time
+        if dt < 0.01: return 7.5
 
-        # Bottom Plot: PID Term Contributions
-        ax2.plot(speed_plot["p"], label="P (Proportional)")
-        ax2.plot(speed_plot["i"], label="I (Integral)")
-        ax2.plot(speed_plot["d"], label="D (Derivative)")
-        ax2.set_ylabel("PWM Correction Value")
-        ax2.set_xlabel("Sample Number")
-        ax2.legend()
-
-        plt.tight_layout()
-        plt.savefig("PID_tuning.png", dpi=150)
+        # 1. Calculate Error (Target is 90)
+        # Using the reference logic: -(actual - 90)
+        error = -(actual_angle - target_angle)
         
-        # CRITICAL: Close the plot to free memory
-        plt.close(fig)
-
-    def update_steering(self, target_direction, actual_direction):
-        current_time = time.time()
-        dt = current_time - self.pid_steering_last_time
-
-        # Prevent zero DC
-        if dt < 0.010:
-            return 7.5
-        
-        # Calculate the difference between target and measured
-        error = target_direction - actual_direction
-        
-        # PID Calculation
+        # 2. PD Calculation
         _P = steering_Kp * error
-        _D =  steering_Kd * ((error - self.pid_steering_last_error) / dt)
+        _D = steering_Kd * (error - self.pid_steering_last_error) / dt
         
-        # New adjustment
-        output = steering_left + (_P + _D)
-        final_pwm = max(steering_left, min(steering_right, output))  # ADC Mapping for final Duty Cycle PWM
+        # 3. Reference Logic: Clip the raw correction first
+        # This prevents the "Integral/Derivative spike" seen in your plot
+        raw_correction = _P + _D
+        raw_correction = max(min(raw_correction, 1.0), -1.0)
 
-        print(f"Actual Dir: {actual_direction:6.1f} | Error Dir: {error:6.1f} --- PID({_P:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
+        # 4. Apply Sensitivity and Neutral Offset
+        # 7.5 is usually the "zero_turn" center for servos
+        final_pwm = 7.5 + (raw_correction * 2.6)
+        
+        # 5. Final Hardware Clamp
+        final_pwm = max(steering_left, min(steering_right, final_pwm))
 
-        # For tuning the PID
-        steering_plot["steering_target"].append(target_direction)
-        steering_plot["steering_actual"].append(actual_direction)
+        # Save data for your plots
+        steering_plot["steering_target"].append(target_angle)
+        steering_plot["steering_actual"].append(actual_angle)
         steering_plot["steering_err"].append(error) 
         steering_plot["p"].append(_P)
+        steering_plot["i"].append(0) # We are using PD now, so I is 0
         steering_plot["d"].append(_D)
 
-        # Update state
-        self.pid_steering_last_time = current_time
+        self.pid_steering_last_time = now
         self.pid_steering_last_error = error
 
         return final_pwm
     
+    def save_pid_plot(self, data_dict, filename, title, y_label_top):
+        """Helper function to handle all PID plotting logic."""
+        # 1. Check for data and synchronized keys
+        if not data_dict or len(next(iter(data_dict.values()))) < 2:
+            print(f"Not enough data to plot {title}.")
+            return
+
+        try:
+            # 2. Sync lengths and create snapshots
+            min_len = min(len(data_dict[k]) for k in data_dict.keys())
+            
+            # Map the specific keys for speed/steering dynamically
+            # We assume standard keys: p, i, d and specific target/actual/err keys
+            p_val = np.array(data_dict["p"][:min_len])
+            i_val = np.array(data_dict["i"][:min_len])
+            d_val = np.array(data_dict["d"][:min_len])
+            
+            # Identify which keys to use for the top plot
+            k_target = [k for k in data_dict if "target" in k][0]
+            k_actual = [k for k in data_dict if "actual" in k][0]
+            k_err    = [k for k in data_dict if "err" in k][0]
+
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+            # Top Plot: Performance
+            ax1.plot(np.array(data_dict[k_target][:min_len]), label="Target", linestyle="--", alpha=0.8)
+            ax1.plot(np.array(data_dict[k_actual][:min_len]), label="Actual", linewidth=2)
+            ax1.plot(np.array(data_dict[k_err][:min_len]), label="Error", linestyle=":", color='gray')
+            ax1.set_ylabel(y_label_top)
+            ax1.set_title(title)
+            ax1.legend(loc='upper right')
+
+            # Bottom Plot: PID Terms
+            ax2.plot(p_val, label="P (Proportional)")
+            ax2.plot(i_val, label="I (Integral)")
+            ax2.plot(d_val, label="D (Derivative)")
+            ax2.set_ylabel("Correction (PWM)")
+            ax2.set_xlabel("Sample Number")
+            ax2.legend(loc='upper right')
+
+            plt.subplots_adjust(hspace=0.3) 
+            plt.savefig(filename, dpi=100)
+            plt.close(fig)
+            print(f"Successfully saved: {filename}")
+
+        except Exception as e:
+            print(f"Failed to plot {title}: {e}")
+
+    # --- Simplified Callers ---
+    def plot_speed_PID(self):
+        self.save_pid_plot(speed_plot, "PID_speed.png", "Speed PID Response", "RPM")
+
     def plot_steering_PID(self):
-        # --- Plotting the Results ---
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-        # Top Plot: RPM Performance
-        ax1.plot(speed_plot["steering_target"], label="Target Steering", linestyle="--")
-        ax1.plot(speed_plot["steering_actual"], label="Actual Steering", linewidth=2)
-        ax1.plot(speed_plot["steering_err"], label="Error Steering", linestyle=":")
-        ax1.set_ylabel("Steering (%)")
-        ax1.legend()
-        ax1.set_title("PID Tuning Response")
-
-        # Bottom Plot: PID Term Contributions
-        ax2.plot(speed_plot["p"], label="P (Proportional)")
-        ax2.plot(speed_plot["d"], label="D (Derivative)")
-        ax2.set_ylabel("PWM Correction Value")
-        ax2.set_xlabel("Sample Number")
-        ax2.legend()
-
-        plt.tight_layout()
-        plt.savefig("PID_tuning.png", dpi=150)
-        
-        # CRITICAL: Close the plot to free memory
-        plt.close(fig)
+        self.save_pid_plot(steering_plot, "PID_steering.png", "Steering PID Response", "Degrees")
 
 
 # if __name__ == "__main__":
-#     motor_controller = MotorController() # Initialize motor controller with default pins and steering direction
+#     motor_controller = MotorController() # Initialize motor controller with default pins and steering angle
 #     try:
 #         while True:
 #             # Move forward
