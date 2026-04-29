@@ -272,10 +272,8 @@ class LaneTracker:
         mid_x = w / 2
 
         if center_fit is None:
-            return None     # FIX 3: return None so caller knows there's no data
+            return None   
 
-        # FIX 4: was `int(h * 0.)` = 0, which points at the very bottom — wrong
-        # Look-ahead point at top of ROI (60% down from top)
         target_y = int(h * 0.6)
         target_x = np.polyval(center_fit, target_y)
 
@@ -287,9 +285,23 @@ class LaneTracker:
 
         steering_angle = int(angle_deg + 90)
 
-        # FIX 5: removed the arbitrary `steering_angle -= 1`
         return max(50, min(130, steering_angle))
 
     def clean_up(self):
         self.cam.release()
         cv2.destroyAllWindows()
+        
+        
+        
+if __name__ == "__main__":
+    tracker = LaneTracker()
+    try:
+        while True:
+            error, red, img = tracker.get_lane_data()
+            if img is not None:
+                print(f"Error: {error:5.1f} | Red Area: {red:6.0f}", end="\r")
+                cv2.imshow("Perfected View", img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+    finally:
+        tracker.clean_up()

@@ -18,13 +18,21 @@ steering_left = 6.0
 steering_trim = 2
 
 # PID Controller
-speed_Kp = 0.0008
-speed_Ki = 0.005
-speed_Kd = 0.00003
+speed_Kp = 0.005
+speed_Ki = 0.0
+speed_Kd = 0.001
+#speed_Kp = 0.008
+#speed_Ki = 0.005
+#speed_Kd = 0.004
 
-steering_Kp = 0.03
-steering_Ki = 0.0
-steering_Kd = 0.0
+
+
+steering_Kp = 0.1
+steering_Ki = 0.00015
+steering_Kd = 0.0065
+#steering_Kp = 0.1
+#steering_Ki = 0.0
+#steering_Kd = 0.00659
 
 # Plot for Tuning PID
 speed_plot = {
@@ -64,8 +72,8 @@ class MotorController:
         
         # Pin Initialization
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(18, GPIO.OUT)
-        GPIO.setup(19, GPIO.OUT)
+        GPIO.setup(speed_pin, GPIO.OUT)
+        GPIO.setup(steering_pin, GPIO.OUT)
         self.speed_pwm = GPIO.PWM(speed_pin, 50) # set the frequency to 50 Hz 
         self.steering_pwm = GPIO.PWM(steering_pin, 50) # set the frequency to 50 Hz 
         # self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
@@ -74,9 +82,19 @@ class MotorController:
         # sleep(0.1)
         # self.speed_pwm.start(5.0) # Don't change the 7.5 DC because it is for initialization
         # sleep(0.5)
+        
+        # Initialization
         self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
         self.steering_pwm.start(steering_forward) # Start with the specified duty cycle
-
+        
+        # Speed init if needed
+#        sleep(2)
+#        self.speed_pwm.start(10.0) # Don't change the 7.5 DC because it is for initialization
+#        sleep(2)
+#        self.speed_pwm.start(5.0) # Don't change the 7.5 DC because it is for initialization
+#        sleep(2)
+#        self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
+        
     def set_speed(self, duty_cycle):
         self.speed_pwm.ChangeDutyCycle(duty_cycle)
 
@@ -92,10 +110,11 @@ class MotorController:
         self.steering_pwm.ChangeDutyCycle(pwm)
 
     def stop(self):
-        self.set_speed(0)
-        self.speed_pwm.stop()
-        self.steering_pwm.stop()
-        GPIO.cleanup()
+        self.set_speed(7.5)
+        self.set_steering_pid(7.5)
+#        self.speed_pwm.stop()
+#        self.steering_pwm.stop()
+#        GPIO.cleanup()
 
     def update_speed(self, target_RPM, measured_RPM):
         current_time = time.time()
@@ -146,8 +165,8 @@ class MotorController:
 
         # 1. Calculate Error (Target is 90)
         # Using the reference logic: -(actual - 90)
-#        error = -(actual_angle - target_angle)
-        error = -(actual_angle - (target_angle + steering_trim))
+        error = (actual_angle - target_angle)
+#        error = -(actual_angle - (target_angle + steering_trim))
         
         if(abs(error) < 2):
           error = 0
@@ -158,16 +177,16 @@ class MotorController:
         self.pid_steering_integral += error * dt
         self.pid_steering_integral = max(-20, min(20, self.pid_steering_integral))  # anti-windup clamp
         _I = steering_Ki * self.pid_steering_integral
-        _D = steering_Kd * (error - self.pid_steering_last_error) / (dt + 1e-6)
+#        _D = steering_Kd * (error - self.pid_steering_last_error) / (dt + 1e-6)
+        _D = steering_Kd * (error - self.pid_steering_last_error) / dt
         
         # 3. Reference Logic: Clip the raw correction first
         # This prevents the "Integral/Derivative spike" seen in your plot
         raw_correction = _P + _I + _D
-        raw_correction = max(min(raw_correction, 1.5), -1.5)
 
         # 4. Apply Sensitivity and Neutral Offset
         # 7.5 is usually the "zero_turn" center for servos
-        final_pwm = 7.5 + (raw_correction * 1.8)
+        final_pwm = 7.5 + (raw_correction * 2.6)
         
         # 5. Final Hardware Clamp
         final_pwm = max(steering_left, min(steering_right, final_pwm))
