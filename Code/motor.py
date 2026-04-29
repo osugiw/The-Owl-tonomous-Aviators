@@ -2,7 +2,6 @@ import matplotlib
 # Use the 'Agg' backend to avoid memory-heavy GUI windows
 matplotlib.use('Agg') 
 import numpy as np
-
 import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 import time
@@ -11,19 +10,21 @@ from time import sleep
 # Minimum DC PWM
 min_speed_pwm = 7.5
 max_speed_pwm = 8.2
-default_speed_pwm = 8.1
+default_speed_pwm = 7.85
 steering_forward = 7.5 
 steering_right = 9.0
 steering_left = 6.0 
 
+steering_trim = 2
+
 # PID Controller
-speed_Kp = 0.001
+speed_Kp = 0.0008
 speed_Ki = 0.005
 speed_Kd = 0.00003
 
-steering_Kp = -0.015
+steering_Kp = 0.03
 steering_Ki = 0.0
-steering_Kd = 0.001
+steering_Kd = 0.0
 
 # Plot for Tuning PID
 speed_plot = {
@@ -43,14 +44,15 @@ steering_plot = {
     "d"           : [],
 }
 
+speed_pin = 18
+steering_pin = 19
 
 """
     Control Motor
 """
 class MotorController:
-    def __init__(self, speed_pin=18, steering_pin=19):
-        self.speed_pin = speed_pin
-        self.steering_pin = steering_pin
+    def __init__(self):
+        self.last_steering_pwm = 7.5
 
         # PID Controller Init
         self.pid_speed_integral = 0
@@ -62,19 +64,17 @@ class MotorController:
         
         # Pin Initialization
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.speed_pin, GPIO.OUT)
-        GPIO.setup(self.steering_pin, GPIO.OUT)
-
-        self.speed_pwm = GPIO.PWM(self.speed_pin, 50) # set the frequency to 50 Hz 
-        self.steering_pwm = GPIO.PWM(self.steering_pin, 50) # set the frequency to 50 Hz 
-
-        self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
+        GPIO.setup(18, GPIO.OUT)
+        GPIO.setup(19, GPIO.OUT)
+        self.speed_pwm = GPIO.PWM(speed_pin, 50) # set the frequency to 50 Hz 
+        self.steering_pwm = GPIO.PWM(steering_pin, 50) # set the frequency to 50 Hz 
+        # self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
         # sleep(0.5)
         # self.speed_pwm.start(10.0) # Don't change the 7.5 DC because it is for initialization
         # sleep(0.1)
         # self.speed_pwm.start(5.0) # Don't change the 7.5 DC because it is for initialization
         # sleep(0.5)
-        # self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
+        self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
         self.steering_pwm.start(steering_forward) # Start with the specified duty cycle
 
     def set_speed(self, duty_cycle):
@@ -87,6 +87,9 @@ class MotorController:
             self.steering_pwm.ChangeDutyCycle(steering_right)
         elif angle == "left":
             self.steering_pwm.ChangeDutyCycle(steering_left)
+
+    def set_steering_pid(self, pwm):
+        self.steering_pwm.ChangeDutyCycle(pwm)
 
     def stop(self):
         self.set_speed(0)
@@ -115,7 +118,7 @@ class MotorController:
         output = min_speed_pwm + (_P + _I + _D)
         final_pwm = max(min_speed_pwm, min(max_speed_pwm, output))  # ADC Mapping for final Duty Cycle PWM
 
-        # print(f"[Speed - RPM] Measured: {measured_RPM:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
+#        print(f"[Speed - RPM] Measured: {measured_RPM:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
 
         # For tuning the PID
         speed_plot["rpm_target"].append(target_RPM)
@@ -133,28 +136,38 @@ class MotorController:
 
     def update_steering(self, target_angle, actual_angle):
         if actual_angle is None:
-            return 7.5  # Neutral/Straight
+            return self.last_steering_pwm  # Neutral/Straight
 
         now = time.time()
         dt = now - self.pid_steering_last_time
-        if dt < 0.01: return 7.5
+        
+        if dt < 0.01: 
+          return self.last_steering_pwm
 
         # 1. Calculate Error (Target is 90)
         # Using the reference logic: -(actual - 90)
-        error = -(actual_angle - target_angle)
+#        error = -(actual_angle - target_angle)
+        error = -(actual_angle - (target_angle + steering_trim))
+        
+        if(abs(error) < 2):
+          error = 0
         
         # 2. PD Calculation
         _P = steering_Kp * error
-        _D = steering_Kd * (error - self.pid_steering_last_error) / dt
+        
+        self.pid_steering_integral += error * dt
+        self.pid_steering_integral = max(-20, min(20, self.pid_steering_integral))  # anti-windup clamp
+        _I = steering_Ki * self.pid_steering_integral
+        _D = steering_Kd * (error - self.pid_steering_last_error) / (dt + 1e-6)
         
         # 3. Reference Logic: Clip the raw correction first
         # This prevents the "Integral/Derivative spike" seen in your plot
-        raw_correction = _P + _D
-        raw_correction = max(min(raw_correction, 1.0), -1.0)
+        raw_correction = _P + _I + _D
+        raw_correction = max(min(raw_correction, 1.5), -1.5)
 
         # 4. Apply Sensitivity and Neutral Offset
         # 7.5 is usually the "zero_turn" center for servos
-        final_pwm = 7.5 + (raw_correction * 2.6)
+        final_pwm = 7.5 + (raw_correction * 1.8)
         
         # 5. Final Hardware Clamp
         final_pwm = max(steering_left, min(steering_right, final_pwm))
@@ -164,11 +177,14 @@ class MotorController:
         steering_plot["steering_actual"].append(actual_angle)
         steering_plot["steering_err"].append(error) 
         steering_plot["p"].append(_P)
-        steering_plot["i"].append(0) # We are using PD now, so I is 0
+        steering_plot["i"].append(_I) # We are using PD now, so I is 0
         steering_plot["d"].append(_D)
+
+        print(f"[Steering - Degree] Measured: {actual_angle:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
 
         self.pid_steering_last_time = now
         self.pid_steering_last_error = error
+        self.last_steering_pwm = final_pwm
 
         return final_pwm
     
@@ -228,35 +244,36 @@ class MotorController:
         self.save_pid_plot(steering_plot, "PID_steering.png", "Steering PID Response", "Degrees")
 
 
-# if __name__ == "__main__":
-#     motor_controller = MotorController() # Initialize motor controller with default pins and steering angle
-#     try:
-#         while True:
-#             # Move forward
-#             motor_controller.set_steering("forward")
-#             motor_controller.set_speed(default_speed_pwm)
-#             sleep(0.5)
-            
-#             # Stop
-#             motor_controller.set_speed(0)
-#             sleep(0.5)
-            
-#             # Turn left
-#             motor_controller.set_steering("left")
-#             motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
-#             sleep(1)
-            
-#             # Turn right
-#             motor_controller.set_steering("right")
-#             motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
-#             sleep(1)
-            
-#             # Turn straight
-#             motor_controller.set_steering("left")
-#             motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
-#             sleep(0.5)
-#     except KeyboardInterrupt:
-#         pass
+if __name__ == "__main__":
+    motor_controller = MotorController() # Initialize motor controller with default pins and steering angle
+    try:
+        while True:
+            # Move forward
+            motor_controller.set_steering("forward")
+            motor_controller.set_speed(default_speed_pwm)
+            sleep(1)
+        
+            # Stop
+            motor_controller.set_speed(0)
+            sleep(0.5)
+        
+            # Turn left
+            motor_controller.set_steering("left")
+            motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
+            sleep(2)
+        
+            # Turn right
+            motor_controller.set_steering("right")
+            motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
+            sleep(2)
+        
+            # Turn straight
+            motor_controller.set_steering("left")
+            motor_controller.set_speed(default_speed_pwm-0.1) # Set speed back to default
+            sleep(1)
+    except KeyboardInterrupt:
+        # Terminate motor controller and clean up GPIO settings
+        motor_controller.stop()
+        pass
 
-#     # Terminate motor controller and clean up GPIO settings
-#     motor_controller.stop()
+    
