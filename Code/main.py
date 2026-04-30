@@ -1,9 +1,9 @@
 
 """
-Project 3: Motor Control with PWM
-This project demonstrates how to control a motor's speed and steering using Pulse Width Modulation (PWM)
-
-Teams: Ashley Garcia, Mehul Goel, Sugiarto Wibowo, Valeria Itrat Herrera
+@Description: 
+    This project was developed as the final project for ELEC 553. The objective was to design and implement an autonomous vehicle capable of navigating a predefined track using computer vision and control techniques.
+@Contributor: 
+    Ashley Garcia, Mehul Goel, Sugiarto Wibowo, Valeria Itrat Herrera
 """
 
 import time
@@ -24,22 +24,24 @@ if __name__ == "__main__":
     prev_steering = 90
     pred_alpha = 0.3
 
+    red_box_thr = 2500
+
     try:
         while True:
+            # Process the land detection and robot steering angle
             time.sleep(0.02)
             actual_steering, red, img = poly_lane_detect.get_lane_data()
             count_frame += 1
             
-            print(f"Red Box Detected! (Size: {red})")
             if img is not None:
                 cv2.imshow("Perfected View", img)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
+            # Box red detection
             if count_frame % 3 == 0:
                 count_frame = 0
-
-                if red is not None and red > 2500 and not red_flag:
+                if red is not None and red > red_box_thr and not red_flag:
                     red_cnt += 1
                     red_flag = True
 
@@ -52,16 +54,16 @@ if __name__ == "__main__":
                         time.sleep(5)
                         motor_ctrl.set_speed(8.1)
                         time.sleep(2)
-
                     elif red_cnt == 2:
                         print("Second stop detected!")
                         motor_ctrl.stop()
                         break
 
-                if (red is None or red <= 2500) and red_flag:
+                if (red is None or red <= red_box_thr) and red_flag:
                     print("Red box disappeared, ready for next detection")
                     red_flag = False
-                    
+
+            # Steering angle calculation and update
             if actual_steering is not None:
                 delta = actual_steering - prev_steering
 
@@ -76,24 +78,26 @@ if __name__ == "__main__":
                 predicted_steering = prev_steering
 
             print(f"Steering: {actual_steering} | Predicted: {predicted_steering:.1f}", end="\r")
-
             steering_pwm = motor_ctrl.update_steering(90, predicted_steering)
             motor_ctrl.set_steering_pid(steering_pwm)
 
+            # Update the speed based on calcualted steering angle
             if actual_steering is not None and (actual_steering < 75 or actual_steering > 105):
                 target_rpm = 30
             else:
                 target_rpm = 40
-
             rpm = motor_enc.calculate_rpm()
             speed_pwm = motor_ctrl.update_speed(target_rpm, rpm)
             motor_ctrl.set_speed(speed_pwm)
-
     except KeyboardInterrupt:
         pass
 
+    # Clear the pipeline and GPIOs
     motor_ctrl.stop()
     poly_lane_detect.clean_up()
+
+    # Plot PID and data for debugging
     motor_ctrl.plot_speed_PID()
     motor_ctrl.plot_steering_PID()
+    motor_ctrl.plot_combined_run()
     print("\nRobot terminated")
