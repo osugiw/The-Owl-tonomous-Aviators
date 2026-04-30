@@ -18,12 +18,12 @@ steering_left = 6.0
 steering_trim = 2
 
 # PID Controller
-speed_Kp = 0.005
-speed_Ki = 0.0
-speed_Kd = 0.001
-#speed_Kp = 0.008
-#speed_Ki = 0.005
-#speed_Kd = 0.004
+speed_Kp = 0.015
+speed_Ki = 0.0072
+speed_Kd = 0.0018
+#speed_Kp = 0.015
+#speed_Ki = 0.0072
+#speed_Kd = 0.0017
 
 
 
@@ -86,9 +86,9 @@ class MotorController:
         # Initialization
         self.speed_pwm.start(7.5) # Don't change the 7.5 DC because it is for initialization
         self.steering_pwm.start(steering_forward) # Start with the specified duty cycle
+        sleep(2)
         
-        # Speed init if needed
-#        sleep(2)
+#         Speed init if needed
 #        self.speed_pwm.start(10.0) # Don't change the 7.5 DC because it is for initialization
 #        sleep(2)
 #        self.speed_pwm.start(5.0) # Don't change the 7.5 DC because it is for initialization
@@ -166,7 +166,6 @@ class MotorController:
         # 1. Calculate Error (Target is 90)
         # Using the reference logic: -(actual - 90)
         error = (actual_angle - target_angle)
-#        error = -(actual_angle - (target_angle + steering_trim))
         
         if(abs(error) < 2):
           error = 0
@@ -177,7 +176,6 @@ class MotorController:
         self.pid_steering_integral += error * dt
         self.pid_steering_integral = max(-20, min(20, self.pid_steering_integral))  # anti-windup clamp
         _I = steering_Ki * self.pid_steering_integral
-#        _D = steering_Kd * (error - self.pid_steering_last_error) / (dt + 1e-6)
         _D = steering_Kd * (error - self.pid_steering_last_error) / dt
         
         # 3. Reference Logic: Clip the raw correction first
@@ -199,7 +197,7 @@ class MotorController:
         steering_plot["i"].append(_I) # We are using PD now, so I is 0
         steering_plot["d"].append(_D)
 
-        print(f"[Steering - Degree] Measured: {actual_angle:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
+#        print(f"[Steering - Degree] Measured: {actual_angle:6.1f} | Error: {error:6.1f} --- PID({_P:1.3f}, {_I:1.3f}, {_D:1.3f}) -> PWM: {final_pwm:5.3f}%")
 
         self.pid_steering_last_time = now
         self.pid_steering_last_error = error
